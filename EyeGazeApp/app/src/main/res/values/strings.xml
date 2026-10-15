@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EyeGaze Demo</string>
+    <string name="title_main">視線追蹤 EyeGaze Demo</string>
+    <string name="subtitle_main">基於 Qualcomm EyeGaze 模型與視線跟隨校準系統</string>
+    <string name="btn_start_calibration">進入校準頁面 (Calibration)</string>
+    <string name="btn_start_tracking">進入視線跟隨 (Gaze Tracking)</string>
+    <string name="status_uncalibrated">狀態：尚未校準 (建議先進行校準以獲得最佳準確度)</string>
+    <string name="status_calibrated">狀態：已完成校準 (5點校準映射已就緒)</string>
+    <string name="model_info_title">模型與推論引擎配置</string>
+    <string name="model_name">模型: Qualcomm EyeNet (EyeGaze)</string>
+    <string name="model_input_res">輸入解析度: 160x96 灰階 (雙眼區域)</string>
+    <string name="model_output_desc">輸出: Gaze Pitch/Yaw (俯仰/偏航角) + 34 特徵點</string>
+    <string name="calibration_instruction">請用雙眼注視螢幕上的亮點，直到光環填滿</string>
+    <string name="recalibrate">重新校準</string>
+</resources>

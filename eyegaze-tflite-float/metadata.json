@@ -1,0 +1,51 @@
+{
+    "model_id": "eyegaze",
+    "model_name": "EyeGaze",
+    "runtime": "tflite",
+    "precision": "float",
+    "tool_versions": {
+        "qairt": "2.50.0.260828221209"
+    },
+    "model_files": {
+        "eyegaze.tflite": {
+            "inputs": {
+                "image": {
+                    "shape": [
+                        1,
+                        96,
+                        160
+                    ],
+                    "dtype": "float32"
+                }
+            },
+            "outputs": {
+                "heatmaps": {
+                    "shape": [
+                        1,
+                        3,
+                        34,
+                        48,
+                        80
+                    ],
+                    "dtype": "float32"
+                },
+                "landmarks": {
+                    "shape": [
+                        1,
+                        34,
+                        2
+                    ],
+                    "dtype": "float32"
+                },
+                "gaze_pitchyaw": {
+                    "shape": [
+                        1,
+                        2
+                    ],
+                    "dtype": "float32"
+                }
+            }
+        }
+    },
+    "use_case": "Gaze Estimation"
+}

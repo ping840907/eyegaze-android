@@ -1,0 +1,3 @@
+-keep class com.example.eyegaze.** { *; }
+-keep class org.tensorflow.lite.** { *; }
+-keep class com.qualcomm.** { *; }

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Eye shape -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M24,54 C34,36 74,36 84,54 C74,72 34,72 24,54 Z"/>
+    <!-- Iris & Pupil -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M54,54m-12,0a12,12 0,1,1 24,0a12,12 0,1,1 -24,0"/>
+    <path
+        android:fillColor="#0F172A"
+        android:pathData="M54,54m-5,0a5,5 0,1,1 10,0a5,5 0,1,1 -10,0"/>
+    <!-- Gaze point dot -->
+    <path
+        android:fillColor="#FF3D00"
+        android:pathData="M66,42m-4,0a4,4 0,1,1 8,0a4,4 0,1,1 -8,0"/>
+</vector>
