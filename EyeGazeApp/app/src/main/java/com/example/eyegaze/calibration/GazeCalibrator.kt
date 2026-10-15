@@ -117,7 +117,7 @@ class GazeCalibrator {
         val drift = hypot(aP - bP, aY - bY)
 
         Log.i("GazeCalibrator", "set check: std=$std drift=$drift")
-        return std <= STABLE_RADIUS * 0.7f && drift <= STABLE_RADIUS * 0.6f
+        return std <= STABLE_RADIUS * 0.85f && drift <= STABLE_RADIUS * 0.85f
     }
 
     fun computeProfile(): CalibrationProfile? {
@@ -150,6 +150,7 @@ class GazeCalibrator {
             yawTopSpan = maxOf(yawTopSpan, 0.020f),
             yawBottomCenter = yawBottomCenter,
             yawBottomSpan = maxOf(yawBottomSpan, 0.020f),
+            yawCenter = c.averageYaw,
             yawDirection = yawDirection,
             pitchDirection = pitchDirection,
             pointsCount = 5

@@ -22,6 +22,7 @@ data class CalibrationProfile(
     val yawTopSpan: Float,
     val yawBottomCenter: Float,
     val yawBottomSpan: Float,
+    val yawCenter: Float = 0f,
     val yawDirection: Float = 1.0f,
     val pitchDirection: Float = 1.0f,
     val timestamp: Long = System.currentTimeMillis(),
@@ -49,9 +50,18 @@ data class CalibrationProfile(
         } else 0.5f
 
         // 2. Expected horizontal center and span at current vertical height
-        val expectedCenterYaw = (1f - t) * yawTopCenter + t * yawBottomCenter
-        val currentYawSpan = (1f - t) * yawTopSpan + t * yawBottomSpan
-        val halfYawSpan = maxOf(currentYawSpan / 2f, 0.025f)
+        val rawCenterYaw = (1f - t) * yawTopCenter + t * yawBottomCenter
+        // Anchor neutral horizontal center with Point #0 (Center)
+        val expectedCenterYaw = if (yawCenter != 0f) {
+            val centerProximity = (1.0f - 2f * abs(t - 0.5f)).coerceIn(0f, 1f)
+            rawCenterYaw * (1f - centerProximity * 0.5f) + yawCenter * (centerProximity * 0.5f)
+        } else rawCenterYaw
+
+        // Robust cross-height span borrowing: prevents one corner's under-rotation from causing runaway sensitivity
+        val robustTopSpan = maxOf(yawTopSpan, yawBottomSpan * 0.60f, 0.040f)
+        val robustBottomSpan = maxOf(yawBottomSpan, yawTopSpan * 0.60f, 0.040f)
+        val currentYawSpan = (1f - t) * robustTopSpan + t * robustBottomSpan
+        val halfYawSpan = maxOf(currentYawSpan / 2f, 0.035f)
 
         // 3. Compute normalized coordinates [0..1]
         // Target points in calibration were at X: 0.15 and 0.85 (span 0.70, halfSpan 0.35)
@@ -77,7 +87,7 @@ data class CalibrationProfile(
 
     fun save(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().apply {
-            putInt("version", 5)
+            putInt("version", 6)
             putFloat("pitchTop", pitchTop)
             putFloat("pitchBottom", pitchBottom)
             putFloat("pitchCenter", pitchCenter)
@@ -85,6 +95,7 @@ data class CalibrationProfile(
             putFloat("yawTopSpan", yawTopSpan)
             putFloat("yawBottomCenter", yawBottomCenter)
             putFloat("yawBottomSpan", yawBottomSpan)
+            putFloat("yawCenter", yawCenter)
             putFloat("yawDirection", yawDirection)
             putFloat("pitchDirection", pitchDirection)
             putLong("timestamp", timestamp)
@@ -101,7 +112,7 @@ data class CalibrationProfile(
 
         fun load(context: Context): CalibrationProfile? {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            if (!prefs.getBoolean("is_calibrated", false) || prefs.getInt("version", 0) != 5) return null
+            if (!prefs.getBoolean("is_calibrated", false) || prefs.getInt("version", 0) != 6) return null
             val p = CalibrationProfile(
                 pitchTop = prefs.getFloat("pitchTop", 0f),
                 pitchBottom = prefs.getFloat("pitchBottom", 0f),
@@ -110,6 +121,7 @@ data class CalibrationProfile(
                 yawTopSpan = prefs.getFloat("yawTopSpan", 0f),
                 yawBottomCenter = prefs.getFloat("yawBottomCenter", 0f),
                 yawBottomSpan = prefs.getFloat("yawBottomSpan", 0f),
+                yawCenter = prefs.getFloat("yawCenter", 0f),
                 yawDirection = prefs.getFloat("yawDirection", 1f),
                 pitchDirection = prefs.getFloat("pitchDirection", 1f),
                 timestamp = prefs.getLong("timestamp", 0L),
