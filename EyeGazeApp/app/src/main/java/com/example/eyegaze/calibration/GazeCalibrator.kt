@@ -147,9 +147,9 @@ class GazeCalibrator {
             pitchBottom = pitchBottom,
             pitchCenter = pitchCenter,
             yawTopCenter = yawTopCenter,
-            yawTopSpan = maxOf(yawTopSpan, 0.003f),
+            yawTopSpan = maxOf(yawTopSpan, 0.020f),
             yawBottomCenter = yawBottomCenter,
-            yawBottomSpan = maxOf(yawBottomSpan, 0.003f),
+            yawBottomSpan = maxOf(yawBottomSpan, 0.020f),
             yawDirection = yawDirection,
             pitchDirection = pitchDirection,
             pointsCount = 5

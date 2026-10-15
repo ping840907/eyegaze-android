@@ -123,10 +123,26 @@ class CameraManager(
             }
     }
 
-    private fun noFace() = GazePrediction(
-        pitch = 0f, yaw = 0f, landmarks = null, inferenceTimeMs = 0L,
-        faceDetected = false, isBlinking = false, engineType = engine.engineName
-    )
+    // Eye socket stabilization filters
+    private var smoothAx = -1f
+    private var smoothAy = -1f
+    private var smoothBx = -1f
+    private var smoothBy = -1f
+
+    private fun resetEyeSmoothing() {
+        smoothAx = -1f
+        smoothAy = -1f
+        smoothBx = -1f
+        smoothBy = -1f
+    }
+
+    private fun noFace(): GazePrediction {
+        resetEyeSmoothing()
+        return GazePrediction(
+            pitch = 0f, yaw = 0f, landmarks = null, inferenceTimeMs = 0L,
+            faceDetected = false, isBlinking = false, engineType = engine.engineName
+        )
+    }
 
     private fun runGaze(frame: Bitmap, face: Face): GazePrediction {
         val l = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
@@ -134,25 +150,52 @@ class CameraManager(
         if (l == null || r == null) return noFace()
 
         // a = eye on the left of the image, b = eye on the right
-        val a = if (l.x <= r.x) l else r
-        val b = if (l.x <= r.x) r else l
-        val dist = hypot(b.x - a.x, b.y - a.y)
-        if (dist < 30f) return noFace()
-        val angle = atan2(b.y - a.y, b.x - a.x)
+        val rawA = if (l.x <= r.x) l else r
+        val rawB = if (l.x <= r.x) r else l
+        val rawDist = hypot(rawB.x - rawA.x, rawB.y - rawA.y)
+        if (rawDist < 30f) return noFace()
+
+        // Smooth eye socket centers across frames to eliminate crop jitter without moving with the pupil
+        if (smoothAx < 0f) {
+            smoothAx = rawA.x
+            smoothAy = rawA.y
+            smoothBx = rawB.x
+            smoothBy = rawB.y
+        } else {
+            val alpha = 0.35f
+            smoothAx = smoothAx * (1f - alpha) + rawA.x * alpha
+            smoothAy = smoothAy * (1f - alpha) + rawA.y * alpha
+            smoothBx = smoothBx * (1f - alpha) + rawB.x * alpha
+            smoothBy = smoothBy * (1f - alpha) + rawB.y * alpha
+        }
+
+        val dist = hypot(smoothBx - smoothAx, smoothBy - smoothAy)
+        val angle = atan2(smoothBy - smoothAy, smoothBx - smoothAx)
         val cropW = dist * 0.55f
 
         val t0 = System.nanoTime()
-        val ra = predictEye(frame, a, angle, cropW)
-        val rb = predictEye(frame, b, angle, cropW)
+        val ra = predictEye(frame, smoothAx, smoothAy, angle, cropW)
+        val rb = predictEye(frame, smoothBx, smoothBy, angle, cropW)
         val ms = (System.nanoTime() - t0) / 1_000_000
 
         val lo = face.leftEyeOpenProbability
         val ro = face.rightEyeOpenProbability
         val blinking = lo != null && ro != null && lo < 0.22f && ro < 0.22f
 
+        val eyeYaw = (ra.yaw + rb.yaw) / 2f
+        val eyePitch = (ra.pitch + rb.pitch) / 2f
+
+        // Head pose from ML Kit in radians (natural head turn/tilt)
+        val headYawRad = Math.toRadians(face.headEulerAngleY.toDouble()).toFloat()
+        val headPitchRad = Math.toRadians(face.headEulerAngleX.toDouble()).toFloat()
+
+        // Physiologically combined gaze: Eye gaze + Head pose contribution
+        val totalYaw = eyeYaw + headYawRad * 0.30f
+        val totalPitch = eyePitch + headPitchRad * 0.30f
+
         return GazePrediction(
-            pitch = (ra.pitch + rb.pitch) / 2f,
-            yaw = (ra.yaw + rb.yaw) / 2f,
+            pitch = totalPitch,
+            yaw = totalYaw,
             landmarks = ra.landmarks,
             inferenceTimeMs = ms,
             faceDetected = true,
@@ -162,29 +205,10 @@ class CameraManager(
     }
 
     /**
-     * Two passes: the first crop comes from the (jittery) face-detector eye position; the model's own
-     * 34 eye landmarks then tell us where the eye really is, and we re-crop around that. This removes
-     * the crop-position jitter that was being turned into gaze noise.
+     * Single inference pass per eye centered on the smoothed eye socket center.
+     * The model directly measures pupil displacement relative to the socket without feedback collapse.
      */
-    private fun predictEye(frame: Bitmap, p: PointF, angle: Float, cropW: Float): GazePrediction {
-        var cx = p.x
-        var cy = p.y
-        val first = engine.predict(EyeRegionExtractor.extract(frame, cx, cy, angle, cropW))
-        val lm = first.landmarks ?: return first
-
-        // landmarks are (row, col) in the 48x80 heatmap grid
-        var sr = 0f; var sc = 0f
-        for (pt in lm) { sr += pt[0]; sc += pt[1] }
-        val meanRow = sr / lm.size
-        val meanCol = sc / lm.size
-        val cropH = cropW * 0.6f
-        val maxShift = cropW * 0.25f
-        val dx = ((meanCol - 40f) / 80f * cropW).coerceIn(-maxShift, maxShift)
-        val dy = ((meanRow - 24f) / 48f * cropH).coerceIn(-maxShift, maxShift)
-        // rotate the shift from the crop frame back to image coordinates
-        cx += dx * cos(angle) - dy * sin(angle)
-        cy += dx * sin(angle) + dy * cos(angle)
-
+    private fun predictEye(frame: Bitmap, cx: Float, cy: Float, angle: Float, cropW: Float): GazePrediction {
         return engine.predict(EyeRegionExtractor.extract(frame, cx, cy, angle, cropW))
     }
 

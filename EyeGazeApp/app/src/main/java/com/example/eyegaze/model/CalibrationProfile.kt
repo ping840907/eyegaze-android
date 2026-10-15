@@ -31,7 +31,7 @@ data class CalibrationProfile(
         get() {
             val all = listOf(pitchTop, pitchBottom, pitchCenter, yawTopCenter, yawTopSpan, yawBottomCenter, yawBottomSpan)
             if (all.any { it.isNaN() || it.isInfinite() }) return false
-            return abs(pitchBottom - pitchTop) >= 0.006f && maxOf(yawTopSpan, yawBottomSpan) >= 0.002f
+            return abs(pitchBottom - pitchTop) >= 0.015f && maxOf(yawTopSpan, yawBottomSpan) >= 0.015f
         }
 
     fun mapGazeToScreen(
@@ -42,35 +42,37 @@ data class CalibrationProfile(
         if (!isValid) return Pair(0.5f * screenWidth, 0.5f * screenHeight)
 
         val pitchSpan = abs(pitchBottom - pitchTop)
-        val halfPitchSpan = maxOf(pitchSpan / 2f, 0.01f)
+        val halfPitchSpan = maxOf(pitchSpan / 2f, 0.020f)
 
         // 1. Vertical progression t from top (0.0) to bottom (1.0)
         val t = if (pitchSpan > 1e-4f) {
-            ((pitch - minOf(pitchTop, pitchBottom)) / pitchSpan).coerceIn(0f, 1f)
+            ((pitch - pitchTop) / (pitchBottom - pitchTop)).coerceIn(0f, 1f)
         } else 0.5f
 
         // 2. Expected horizontal center and span at current vertical height
         val expectedCenterYaw = (1f - t) * yawTopCenter + t * yawBottomCenter
         val currentYawSpan = (1f - t) * yawTopSpan + t * yawBottomSpan
-        val halfYawSpan = maxOf(currentYawSpan / 2f, 0.002f)
+        val halfYawSpan = maxOf(currentYawSpan / 2f, 0.025f)
 
         // 3. Compute normalized coordinates [0..1]
-        val rawNormX = 0.5f + 0.35f * yawDirection * ((yaw - expectedCenterYaw) / halfYawSpan).coerceIn(-2.5f, 2.5f)
-        val rawNormY = 0.5f + 0.35f * pitchDirection * ((pitch - pitchCenter) / halfPitchSpan).coerceIn(-2.5f, 2.5f)
+        // Target points in calibration were at X: 0.15 and 0.85 (span 0.70, halfSpan 0.35)
+        // and Y: 0.15 and 0.85 (span 0.70, halfSpan 0.35).
+        val rawNormX = 0.5f + 0.35f * yawDirection * ((yaw - expectedCenterYaw) / halfYawSpan).coerceIn(-1.5f, 1.5f)
+        val rawNormY = 0.5f + 0.35f * pitchDirection * ((pitch - pitchCenter) / halfPitchSpan).coerceIn(-1.5f, 1.5f)
 
         // 4. Apply sensitivity gain around screen center (0.5, 0.5)
         val nx = 0.5f + (rawNormX - 0.5f) * gainX
         val ny = 0.5f + (rawNormY - 0.5f) * gainY
 
         return Pair(
-            nx.coerceIn(0.03f, 0.97f) * screenWidth,
-            ny.coerceIn(0.03f, 0.97f) * screenHeight
+            nx.coerceIn(0.02f, 0.98f) * screenWidth,
+            ny.coerceIn(0.02f, 0.98f) * screenHeight
         )
     }
 
     fun save(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().apply {
-            putInt("version", 4)
+            putInt("version", 5)
             putFloat("pitchTop", pitchTop)
             putFloat("pitchBottom", pitchBottom)
             putFloat("pitchCenter", pitchCenter)
@@ -94,7 +96,7 @@ data class CalibrationProfile(
 
         fun load(context: Context): CalibrationProfile? {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            if (!prefs.getBoolean("is_calibrated", false) || prefs.getInt("version", 0) != 4) return null
+            if (!prefs.getBoolean("is_calibrated", false) || prefs.getInt("version", 0) != 5) return null
             val p = CalibrationProfile(
                 pitchTop = prefs.getFloat("pitchTop", 0f),
                 pitchBottom = prefs.getFloat("pitchBottom", 0f),

@@ -32,9 +32,9 @@ class GazeTrackingActivity : AppCompatActivity() {
     private var smoothPitch = 0f
     private var hasAngleInit = false
 
-    // Screen coordinate 1€ Filters (Calm fixation tuning)
-    private val filterX = OneEuroFilter(minCutoff = 0.22f, beta = 0.018f)
-    private val filterY = OneEuroFilter(minCutoff = 0.22f, beta = 0.018f)
+    // Screen coordinate 1€ Filters (Balanced default tuning: fast response, zero stuck edges)
+    private val filterX = OneEuroFilter(minCutoff = 0.55f, beta = 0.030f)
+    private val filterY = OneEuroFilter(minCutoff = 0.55f, beta = 0.030f)
 
     // Sensitivity gain: 1.0 maps the calibration targets exactly onto their screen positions
     private var gainX = 1.0f
@@ -43,7 +43,7 @@ class GazeTrackingActivity : AppCompatActivity() {
     private var currentGainIndex = 0
 
     // Smoothing Levels
-    private var currentSmoothLevel = 0 // 0: High, 1: Medium, 2: Responsive
+    private var currentSmoothLevel = 1 // 0: High, 1: Medium (Default), 2: Responsive
 
     // Last stable screen coordinates (used during blink freeze)
     private var lastValidScreenX = -1f
@@ -143,8 +143,9 @@ class GazeTrackingActivity : AppCompatActivity() {
             val dYaw = smoothYaw - runningBaselineYaw
             val dPitch = smoothPitch - runningBaselinePitch
 
-            val defX = (0.5f + (dYaw / 0.35f) * gainX).coerceIn(0.04f, 0.96f) * screenW
-            val defY = (0.5f + (dPitch / 0.30f) * gainY).coerceIn(0.04f, 0.96f) * screenH
+            // Front camera: looking right gives negative yaw in camera coords, looking down gives negative pitch
+            val defX = (0.5f - (dYaw / 0.15f) * gainX).coerceIn(0.04f, 0.96f) * screenW
+            val defY = (0.5f + (dPitch / 0.15f) * gainY).coerceIn(0.04f, 0.96f) * screenH
             Pair(defX, defY)
         }
 
@@ -166,7 +167,7 @@ class GazeTrackingActivity : AppCompatActivity() {
 
         // Update HUD
         binding.tvGazeCoords.text = "視線點位: X: ${finalX.toInt()}, Y: ${finalY.toInt()}"
-        binding.tvAngles.text = "Pitch: %.2f  Yaw: %.2f".format(smoothPitch, smoothYaw)
+        binding.tvAngles.text = "Pitch: %.2f  Yaw: %.2f | Profile: %b".format(smoothPitch, smoothYaw, profile != null)
         binding.tvFpsLatency.text = "FPS: $currentFps | ${prediction.inferenceTimeMs} ms"
     }
 
@@ -181,17 +182,18 @@ class GazeTrackingActivity : AppCompatActivity() {
         binding.btnSensitivity.text = "靈敏度: ${gainX}x"
 
         // Smoothing Toggle
+        binding.btnSmooth.text = "平滑: 中 (均衡)"
         binding.btnSmooth.setOnClickListener {
             currentSmoothLevel = (currentSmoothLevel + 1) % 3
             when (currentSmoothLevel) {
                 0 -> {
-                    filterX.setParameters(0.22f, 0.018f)
-                    filterY.setParameters(0.22f, 0.018f)
+                    filterX.setParameters(0.25f, 0.018f)
+                    filterY.setParameters(0.25f, 0.018f)
                     binding.btnSmooth.text = "平滑: 高 (超穩定)"
                 }
                 1 -> {
-                    filterX.setParameters(0.50f, 0.035f)
-                    filterY.setParameters(0.50f, 0.035f)
+                    filterX.setParameters(0.55f, 0.030f)
+                    filterY.setParameters(0.55f, 0.030f)
                     binding.btnSmooth.text = "平滑: 中 (均衡)"
                 }
                 2 -> {
