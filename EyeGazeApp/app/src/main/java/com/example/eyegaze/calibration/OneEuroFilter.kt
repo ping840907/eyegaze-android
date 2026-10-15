@@ -9,8 +9,8 @@ import kotlin.math.abs
  * and high responsiveness during fast eye saccades.
  */
 class OneEuroFilter(
-    private var minCutoff: Float = 0.22f,
-    private var beta: Float = 0.018f,
+    private var minCutoff: Float = 0.35f,
+    private var beta: Float = 2.5f,
     private var dCutoff: Float = 1.0f
 ) {
     private var xPrev = 0f
@@ -30,8 +30,14 @@ class OneEuroFilter(
         val dt = (timestampMs - tPrev).toFloat() / 1000f
         tPrev = timestampMs
 
-        if (dt <= 0.001f || dt > 1.0f) {
+        // If called twice in the same frame/millisecond, preserve filtered state without resetting
+        if (dt <= 0.001f) {
+            return xPrev
+        }
+
+        if (dt > 1.0f) {
             xPrev = value
+            dxPrev = 0f
             return value
         }
 

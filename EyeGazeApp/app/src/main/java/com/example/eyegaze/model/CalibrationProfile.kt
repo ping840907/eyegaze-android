@@ -34,12 +34,11 @@ data class CalibrationProfile(
             return abs(pitchBottom - pitchTop) >= 0.015f && maxOf(yawTopSpan, yawBottomSpan) >= 0.015f
         }
 
-    fun mapGazeToScreen(
+    fun mapGazeToNormalized(
         pitch: Float, yaw: Float,
-        screenWidth: Float, screenHeight: Float,
         gainX: Float = 1.0f, gainY: Float = 1.0f
     ): Pair<Float, Float> {
-        if (!isValid) return Pair(0.5f * screenWidth, 0.5f * screenHeight)
+        if (!isValid) return Pair(0.5f, 0.5f)
 
         val pitchSpan = abs(pitchBottom - pitchTop)
         val halfPitchSpan = maxOf(pitchSpan / 2f, 0.020f)
@@ -64,10 +63,16 @@ data class CalibrationProfile(
         val nx = 0.5f + (rawNormX - 0.5f) * gainX
         val ny = 0.5f + (rawNormY - 0.5f) * gainY
 
-        return Pair(
-            nx.coerceIn(0.02f, 0.98f) * screenWidth,
-            ny.coerceIn(0.02f, 0.98f) * screenHeight
-        )
+        return Pair(nx.coerceIn(0.02f, 0.98f), ny.coerceIn(0.02f, 0.98f))
+    }
+
+    fun mapGazeToScreen(
+        pitch: Float, yaw: Float,
+        screenWidth: Float, screenHeight: Float,
+        gainX: Float = 1.0f, gainY: Float = 1.0f
+    ): Pair<Float, Float> {
+        val (nx, ny) = mapGazeToNormalized(pitch, yaw, gainX, gainY)
+        return Pair(nx * screenWidth, ny * screenHeight)
     }
 
     fun save(context: Context) {

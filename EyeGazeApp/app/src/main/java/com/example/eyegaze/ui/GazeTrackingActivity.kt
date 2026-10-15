@@ -13,6 +13,7 @@ import com.example.eyegaze.engine.EyeGazeInferenceEngine
 import com.example.eyegaze.engine.GazeEngineFactory
 import com.example.eyegaze.model.CalibrationProfile
 import com.example.eyegaze.model.GazePrediction
+import kotlin.math.hypot
 
 class GazeTrackingActivity : AppCompatActivity() {
 
@@ -32,9 +33,13 @@ class GazeTrackingActivity : AppCompatActivity() {
     private var smoothPitch = 0f
     private var hasAngleInit = false
 
-    // Screen coordinate 1€ Filters (Balanced default tuning: fast response, zero stuck edges)
-    private val filterX = OneEuroFilter(minCutoff = 0.55f, beta = 0.030f)
-    private val filterY = OneEuroFilter(minCutoff = 0.55f, beta = 0.030f)
+    // Screen coordinate 1€ Filters (Normalized space [0..1] tuning: rock-solid fixation + snappy saccades)
+    private val filterX = OneEuroFilter(minCutoff = 0.35f, beta = 2.5f)
+    private val filterY = OneEuroFilter(minCutoff = 0.35f, beta = 2.5f)
+
+    // Fixation Deadband in normalized coordinates
+    private var deadbandNormX = -1f
+    private var deadbandNormY = -1f
 
     // Sensitivity gain: 1.0 maps the calibration targets exactly onto their screen positions
     private var gainX = 1.0f
@@ -118,17 +123,17 @@ class GazeTrackingActivity : AppCompatActivity() {
             hasAngleInit = true
         } else {
             val alpha = when (currentSmoothLevel) {
-                0 -> 0.20f // Ultra-stable fixation
-                1 -> 0.35f // Balanced
-                else -> 0.55f // High speed
+                0 -> 0.15f // Ultra-stable fixation
+                1 -> 0.28f // Balanced (Default)
+                else -> 0.45f // High speed
             }
             smoothYaw = smoothYaw * (1f - alpha) + prediction.yaw * alpha
             smoothPitch = smoothPitch * (1f - alpha) + prediction.pitch * alpha
         }
 
-        // 2. Compute Screen (X, Y)
-        val (rawX, rawY) = if (profile != null) {
-            profile!!.mapGazeToScreen(smoothPitch, smoothYaw, screenW, screenH, gainX, gainY)
+        // 2. Compute Normalized Screen Coordinates [0..1]
+        val (normX, normY) = if (profile != null) {
+            profile!!.mapGazeToNormalized(smoothPitch, smoothYaw, gainX, gainY)
         } else {
             // Adaptive uncalibrated baseline
             if (!hasBaseline) {
@@ -144,21 +149,42 @@ class GazeTrackingActivity : AppCompatActivity() {
             val dPitch = smoothPitch - runningBaselinePitch
 
             // Front camera: looking right gives negative yaw in camera coords, looking down gives negative pitch
-            val defX = (0.5f - (dYaw / 0.15f) * gainX).coerceIn(0.04f, 0.96f) * screenW
-            val defY = (0.5f + (dPitch / 0.15f) * gainY).coerceIn(0.04f, 0.96f) * screenH
-            Pair(defX, defY)
+            val defNx = (0.5f - (dYaw / 0.15f) * gainX).coerceIn(0.04f, 0.96f)
+            val defNy = (0.5f + (dPitch / 0.15f) * gainY).coerceIn(0.04f, 0.96f)
+            Pair(defNx, defNy)
         }
 
-        // 3. Second-layer OneEuroFilter for silky cursor motion
-        val finalX = filterX.filter(rawX, now)
-        val finalY = filterY.filter(rawY, now)
+        // 3. Fixation Deadband: absorbs physiological ocular tremor (< 1.5% screen)
+        val moveDist = hypot(normX - deadbandNormX, normY - deadbandNormY)
+        val (stableNormX, stableNormY) = if (deadbandNormX < 0f) {
+            deadbandNormX = normX
+            deadbandNormY = normY
+            Pair(normX, normY)
+        } else if (moveDist < 0.015f) {
+            // Fixating: heavily dampen micro-fluctuations
+            deadbandNormX = deadbandNormX * 0.90f + normX * 0.10f
+            deadbandNormY = deadbandNormY * 0.90f + normY * 0.10f
+            Pair(deadbandNormX, deadbandNormY)
+        } else {
+            // Saccade / Shift: free tracking with zero latency
+            deadbandNormX = normX
+            deadbandNormY = normY
+            Pair(normX, normY)
+        }
+
+        // 4. OneEuroFilter in normalized space [0..1]
+        val filteredNormX = filterX.filter(stableNormX, now)
+        val filteredNormY = filterY.filter(stableNormY, now)
+
+        val finalX = filteredNormX * screenW
+        val finalY = filteredNormY * screenH
 
         lastValidScreenX = finalX
         lastValidScreenY = finalY
 
         if (++logCounter % 30 == 0) {
-            Log.d("GazeTracking", "Raw=(%.3f, %.3f), Smooth=(%.3f, %.3f) -> Screen=(%.1f, %.1f)".format(
-                prediction.pitch, prediction.yaw, smoothPitch, smoothYaw, finalX, finalY
+            Log.d("GazeTracking", "Raw=(%.3f, %.3f), Smooth=(%.3f, %.3f) -> Norm=(%.2f, %.2f) Screen=(%.1f, %.1f)".format(
+                prediction.pitch, prediction.yaw, smoothPitch, smoothYaw, filteredNormX, filteredNormY, finalX, finalY
             ))
         }
 
@@ -187,18 +213,18 @@ class GazeTrackingActivity : AppCompatActivity() {
             currentSmoothLevel = (currentSmoothLevel + 1) % 3
             when (currentSmoothLevel) {
                 0 -> {
-                    filterX.setParameters(0.25f, 0.018f)
-                    filterY.setParameters(0.25f, 0.018f)
+                    filterX.setParameters(0.20f, 1.5f)
+                    filterY.setParameters(0.20f, 1.5f)
                     binding.btnSmooth.text = "平滑: 高 (超穩定)"
                 }
                 1 -> {
-                    filterX.setParameters(0.55f, 0.030f)
-                    filterY.setParameters(0.55f, 0.030f)
+                    filterX.setParameters(0.35f, 2.5f)
+                    filterY.setParameters(0.35f, 2.5f)
                     binding.btnSmooth.text = "平滑: 中 (均衡)"
                 }
                 2 -> {
-                    filterX.setParameters(1.0f, 0.06f)
-                    filterY.setParameters(1.0f, 0.06f)
+                    filterX.setParameters(0.55f, 4.0f)
+                    filterY.setParameters(0.55f, 4.0f)
                     binding.btnSmooth.text = "平滑: 低 (靈敏)"
                 }
             }

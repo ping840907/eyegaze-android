@@ -42,7 +42,7 @@ class CameraManager(
 
     private val faceDetector = FaceDetection.getClient(
         FaceDetectorOptions.Builder()
-            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
             .build()
@@ -129,11 +129,29 @@ class CameraManager(
     private var smoothBx = -1f
     private var smoothBy = -1f
 
+    // Crop geometry stabilization
+    private var smoothAngle = -999f
+    private var smoothCropW = -1f
+
+    // Head pose stabilization
+    private var smoothHeadYaw = 0f
+    private var smoothHeadPitch = 0f
+    private var hasHeadPoseInit = false
+
+    // Output gaze stabilization
+    private var smoothOutputYaw = 0f
+    private var smoothOutputPitch = 0f
+    private var hasOutputGazeInit = false
+
     private fun resetEyeSmoothing() {
         smoothAx = -1f
         smoothAy = -1f
         smoothBx = -1f
         smoothBy = -1f
+        smoothAngle = -999f
+        smoothCropW = -1f
+        hasHeadPoseInit = false
+        hasOutputGazeInit = false
     }
 
     private fun noFace(): GazePrediction {
@@ -155,27 +173,37 @@ class CameraManager(
         val rawDist = hypot(rawB.x - rawA.x, rawB.y - rawA.y)
         if (rawDist < 30f) return noFace()
 
-        // Smooth eye socket centers across frames to eliminate crop jitter without moving with the pupil
+        // 1. Smooth eye socket centers across frames to eliminate crop translation jitter
         if (smoothAx < 0f) {
             smoothAx = rawA.x
             smoothAy = rawA.y
             smoothBx = rawB.x
             smoothBy = rawB.y
         } else {
-            val alpha = 0.35f
+            val alpha = 0.25f
             smoothAx = smoothAx * (1f - alpha) + rawA.x * alpha
             smoothAy = smoothAy * (1f - alpha) + rawA.y * alpha
             smoothBx = smoothBx * (1f - alpha) + rawB.x * alpha
             smoothBy = smoothBy * (1f - alpha) + rawB.y * alpha
         }
 
+        // 2. Smooth inter-eye crop angle and crop width to eliminate rotation jitter
         val dist = hypot(smoothBx - smoothAx, smoothBy - smoothAy)
-        val angle = atan2(smoothBy - smoothAy, smoothBx - smoothAx)
-        val cropW = dist * 0.55f
+        val rawAngle = atan2(smoothBy - smoothAy, smoothBx - smoothAx)
+        val rawCropW = dist * 0.55f
+
+        if (smoothAngle < -900f) {
+            smoothAngle = rawAngle
+            smoothCropW = rawCropW
+        } else {
+            val geoAlpha = 0.18f
+            smoothAngle = smoothAngle * (1f - geoAlpha) + rawAngle * geoAlpha
+            smoothCropW = smoothCropW * (1f - geoAlpha) + rawCropW * geoAlpha
+        }
 
         val t0 = System.nanoTime()
-        val ra = predictEye(frame, smoothAx, smoothAy, angle, cropW)
-        val rb = predictEye(frame, smoothBx, smoothBy, angle, cropW)
+        val ra = predictEye(frame, smoothAx, smoothAy, smoothAngle, smoothCropW)
+        val rb = predictEye(frame, smoothBx, smoothBy, smoothAngle, smoothCropW)
         val ms = (System.nanoTime() - t0) / 1_000_000
 
         val lo = face.leftEyeOpenProbability
@@ -185,17 +213,38 @@ class CameraManager(
         val eyeYaw = (ra.yaw + rb.yaw) / 2f
         val eyePitch = (ra.pitch + rb.pitch) / 2f
 
-        // Head pose from ML Kit in radians (natural head turn/tilt)
-        val headYawRad = Math.toRadians(face.headEulerAngleY.toDouble()).toFloat()
-        val headPitchRad = Math.toRadians(face.headEulerAngleX.toDouble()).toFloat()
+        // 3. Smooth head pose from ML Kit in radians
+        val rawHeadYawRad = Math.toRadians(face.headEulerAngleY.toDouble()).toFloat()
+        val rawHeadPitchRad = Math.toRadians(face.headEulerAngleX.toDouble()).toFloat()
 
-        // Physiologically combined gaze: Eye gaze + Head pose contribution
-        val totalYaw = eyeYaw + headYawRad * 0.30f
-        val totalPitch = eyePitch + headPitchRad * 0.30f
+        if (!hasHeadPoseInit) {
+            smoothHeadYaw = rawHeadYawRad
+            smoothHeadPitch = rawHeadPitchRad
+            hasHeadPoseInit = true
+        } else {
+            val headAlpha = 0.20f
+            smoothHeadYaw = smoothHeadYaw * (1f - headAlpha) + rawHeadYawRad * headAlpha
+            smoothHeadPitch = smoothHeadPitch * (1f - headAlpha) + rawHeadPitchRad * headAlpha
+        }
+
+        // 4. Combined gaze vector
+        val rawTotalYaw = eyeYaw + smoothHeadYaw * 0.30f
+        val rawTotalPitch = eyePitch + smoothHeadPitch * 0.30f
+
+        // 5. Pre-filter output gaze angles to feed clean, flutter-free signals to Calibration & Tracking
+        if (!hasOutputGazeInit) {
+            smoothOutputYaw = rawTotalYaw
+            smoothOutputPitch = rawTotalPitch
+            hasOutputGazeInit = true
+        } else {
+            val gazeAlpha = 0.35f
+            smoothOutputYaw = smoothOutputYaw * (1f - gazeAlpha) + rawTotalYaw * gazeAlpha
+            smoothOutputPitch = smoothOutputPitch * (1f - gazeAlpha) + rawTotalPitch * gazeAlpha
+        }
 
         return GazePrediction(
-            pitch = totalPitch,
-            yaw = totalYaw,
+            pitch = smoothOutputPitch,
+            yaw = smoothOutputYaw,
             landmarks = ra.landmarks,
             inferenceTimeMs = ms,
             faceDetected = true,
