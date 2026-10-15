@@ -41,6 +41,14 @@ class GazeTrackingActivity : AppCompatActivity() {
     private var deadbandNormX = -1f
     private var deadbandNormY = -1f
 
+    // Intelligent Fixation Lock state (pins cursor to target when paused, releases on saccade)
+    private var isFixated = false
+    private var fixatedNormX = -1f
+    private var fixatedNormY = -1f
+    private var lowVelocityFrames = 0
+    private var prevFilteredNormX = -1f
+    private var prevFilteredNormY = -1f
+
     // Sensitivity gain: 1.0 maps the calibration targets exactly onto their screen positions
     private var gainX = 1.0f
     private var gainY = 1.0f
@@ -176,15 +184,61 @@ class GazeTrackingActivity : AppCompatActivity() {
         val filteredNormX = filterX.filter(stableNormX, now)
         val filteredNormY = filterY.filter(stableNormY, now)
 
-        val finalX = filteredNormX * screenW
-        val finalY = filteredNormY * screenH
+        // 5. Intelligent Fixation Lock (Eliminates post-saccade horizontal/vertical drift)
+        val frameShift = if (prevFilteredNormX >= 0f) {
+            hypot(filteredNormX - prevFilteredNormX, filteredNormY - prevFilteredNormY)
+        } else 0f
+        prevFilteredNormX = filteredNormX
+        prevFilteredNormY = filteredNormY
+
+        val (lockedNormX, lockedNormY) = if (fixatedNormX < 0f) {
+            fixatedNormX = filteredNormX
+            fixatedNormY = filteredNormY
+            Pair(filteredNormX, filteredNormY)
+        } else {
+            val distFromLock = hypot(filteredNormX - fixatedNormX, filteredNormY - fixatedNormY)
+
+            if (isFixated) {
+                // In Fixation Lock: user is staring at a target.
+                // Small drift (< 4.5% of screen width) is completely absorbed!
+                if (distFromLock < 0.045f) {
+                    // Slowly adapt lock position towards true center without swinging
+                    fixatedNormX = fixatedNormX * 0.96f + filteredNormX * 0.04f
+                    fixatedNormY = fixatedNormY * 0.96f + filteredNormY * 0.04f
+                    Pair(fixatedNormX, fixatedNormY)
+                } else {
+                    // Saccade! User looked away to another target, release lock immediately
+                    isFixated = false
+                    lowVelocityFrames = 0
+                    fixatedNormX = filteredNormX
+                    fixatedNormY = filteredNormY
+                    Pair(filteredNormX, filteredNormY)
+                }
+            } else {
+                // Moving: check if eye has paused at a new fixation position
+                if (frameShift < 0.018f) {
+                    lowVelocityFrames++
+                    if (lowVelocityFrames >= 4) { // Paused for ~120ms
+                        isFixated = true
+                        fixatedNormX = filteredNormX
+                        fixatedNormY = filteredNormY
+                    }
+                } else {
+                    lowVelocityFrames = 0
+                }
+                Pair(filteredNormX, filteredNormY)
+            }
+        }
+
+        val finalX = lockedNormX * screenW
+        val finalY = lockedNormY * screenH
 
         lastValidScreenX = finalX
         lastValidScreenY = finalY
 
         if (++logCounter % 30 == 0) {
-            Log.d("GazeTracking", "Raw=(%.3f, %.3f), Smooth=(%.3f, %.3f) -> Norm=(%.2f, %.2f) Screen=(%.1f, %.1f)".format(
-                prediction.pitch, prediction.yaw, smoothPitch, smoothYaw, filteredNormX, filteredNormY, finalX, finalY
+            Log.d("GazeTracking", "Raw=(%.3f, %.3f), Smooth=(%.3f, %.3f) -> Locked=(%.2f, %.2f) Screen=(%.1f, %.1f) Fixated=%b".format(
+                prediction.pitch, prediction.yaw, smoothPitch, smoothYaw, lockedNormX, lockedNormY, finalX, finalY, isFixated
             ))
         }
 
@@ -193,7 +247,9 @@ class GazeTrackingActivity : AppCompatActivity() {
 
         // Update HUD
         binding.tvGazeCoords.text = "視線點位: X: ${finalX.toInt()}, Y: ${finalY.toInt()}"
-        binding.tvAngles.text = "Pitch: %.2f  Yaw: %.2f | Profile: %b".format(smoothPitch, smoothYaw, profile != null)
+        binding.tvAngles.text = "Pitch: %.2f  Yaw: %.2f | 鎖定: %s".format(
+            smoothPitch, smoothYaw, if (isFixated) "🔒 凝視鎖定" else "🎯 移動跟隨"
+        )
         binding.tvFpsLatency.text = "FPS: $currentFps | ${prediction.inferenceTimeMs} ms"
     }
 

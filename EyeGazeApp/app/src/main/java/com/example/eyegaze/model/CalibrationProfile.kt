@@ -41,15 +41,37 @@ data class CalibrationProfile(
     ): Pair<Float, Float> {
         if (!isValid) return Pair(0.5f, 0.5f)
 
-        val pitchSpan = abs(pitchBottom - pitchTop)
-        val halfPitchSpan = maxOf(pitchSpan / 2f, 0.020f)
+        // 1. Piecewise Linear Vertical Mapping (Y)
+        // Upward span (Center to Top) and downward span (Center to Bottom) are calibrated independently
+        val upSpan = maxOf(abs(pitchCenter - pitchTop), 0.020f)
+        val downSpan = maxOf(abs(pitchBottom - pitchCenter), 0.020f)
 
-        // 1. Vertical progression t from top (0.0) to bottom (1.0)
-        val t = if (pitchSpan > 1e-4f) {
-            ((pitch - pitchTop) / (pitchBottom - pitchTop)).coerceIn(0f, 1f)
-        } else 0.5f
+        val rawNormY = if (pitchDirection >= 0f) {
+            // Pitch increases downwards (normal case)
+            if (pitch <= pitchCenter) {
+                // Top half: maps pitchTop..pitchCenter -> 0.15..0.50
+                val tUp = ((pitchCenter - pitch) / upSpan).coerceIn(0f, 1.5f)
+                0.50f - 0.35f * tUp
+            } else {
+                // Bottom half: maps pitchCenter..pitchBottom -> 0.50..0.85
+                val tDown = ((pitch - pitchCenter) / downSpan).coerceIn(0f, 1.5f)
+                0.50f + 0.35f * tDown
+            }
+        } else {
+            // Pitch decreases downwards (inverted case)
+            if (pitch >= pitchCenter) {
+                val tUp = ((pitch - pitchCenter) / upSpan).coerceIn(0f, 1.5f)
+                0.50f - 0.35f * tUp
+            } else {
+                val tDown = ((pitchCenter - pitch) / downSpan).coerceIn(0f, 1.5f)
+                0.50f + 0.35f * tDown
+            }
+        }
 
-        // 2. Expected horizontal center and span at current vertical height
+        // 2. Exact vertical progression t for horizontal trapezoid compensation
+        val t = rawNormY.coerceIn(0f, 1f)
+
+        // 3. Expected horizontal center and span at current vertical height
         val rawCenterYaw = (1f - t) * yawTopCenter + t * yawBottomCenter
         // Anchor neutral horizontal center with Point #0 (Center)
         val expectedCenterYaw = if (yawCenter != 0f) {
@@ -63,11 +85,7 @@ data class CalibrationProfile(
         val currentYawSpan = (1f - t) * robustTopSpan + t * robustBottomSpan
         val halfYawSpan = maxOf(currentYawSpan / 2f, 0.035f)
 
-        // 3. Compute normalized coordinates [0..1]
-        // Target points in calibration were at X: 0.15 and 0.85 (span 0.70, halfSpan 0.35)
-        // and Y: 0.15 and 0.85 (span 0.70, halfSpan 0.35).
         val rawNormX = 0.5f + 0.35f * yawDirection * ((yaw - expectedCenterYaw) / halfYawSpan).coerceIn(-1.5f, 1.5f)
-        val rawNormY = 0.5f + 0.35f * pitchDirection * ((pitch - pitchCenter) / halfPitchSpan).coerceIn(-1.5f, 1.5f)
 
         // 4. Apply sensitivity gain around screen center (0.5, 0.5)
         val nx = 0.5f + (rawNormX - 0.5f) * gainX
@@ -87,7 +105,7 @@ data class CalibrationProfile(
 
     fun save(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().apply {
-            putInt("version", 6)
+            putInt("version", 7)
             putFloat("pitchTop", pitchTop)
             putFloat("pitchBottom", pitchBottom)
             putFloat("pitchCenter", pitchCenter)
@@ -112,7 +130,7 @@ data class CalibrationProfile(
 
         fun load(context: Context): CalibrationProfile? {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            if (!prefs.getBoolean("is_calibrated", false) || prefs.getInt("version", 0) != 6) return null
+            if (!prefs.getBoolean("is_calibrated", false) || prefs.getInt("version", 0) != 7) return null
             val p = CalibrationProfile(
                 pitchTop = prefs.getFloat("pitchTop", 0f),
                 pitchBottom = prefs.getFloat("pitchBottom", 0f),

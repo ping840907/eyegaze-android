@@ -213,31 +213,17 @@ class CameraManager(
         val eyeYaw = (ra.yaw + rb.yaw) / 2f
         val eyePitch = (ra.pitch + rb.pitch) / 2f
 
-        // 3. Smooth head pose from ML Kit in radians
-        val rawHeadYawRad = Math.toRadians(face.headEulerAngleY.toDouble()).toFloat()
-        val rawHeadPitchRad = Math.toRadians(face.headEulerAngleX.toDouble()).toFloat()
+        // 3. Pure eye gaze from Qualcomm EyeNet (eliminates head-wobble leakage during fixation)
+        val rawTotalYaw = eyeYaw
+        val rawTotalPitch = eyePitch
 
-        if (!hasHeadPoseInit) {
-            smoothHeadYaw = rawHeadYawRad
-            smoothHeadPitch = rawHeadPitchRad
-            hasHeadPoseInit = true
-        } else {
-            val headAlpha = 0.20f
-            smoothHeadYaw = smoothHeadYaw * (1f - headAlpha) + rawHeadYawRad * headAlpha
-            smoothHeadPitch = smoothHeadPitch * (1f - headAlpha) + rawHeadPitchRad * headAlpha
-        }
-
-        // 4. Combined gaze vector
-        val rawTotalYaw = eyeYaw + smoothHeadYaw * 0.30f
-        val rawTotalPitch = eyePitch + smoothHeadPitch * 0.30f
-
-        // 5. Pre-filter output gaze angles to feed clean, flutter-free signals to Calibration & Tracking
+        // 4. Pre-filter output gaze angles to feed clean, flutter-free signals to Calibration & Tracking
         if (!hasOutputGazeInit) {
             smoothOutputYaw = rawTotalYaw
             smoothOutputPitch = rawTotalPitch
             hasOutputGazeInit = true
         } else {
-            val gazeAlpha = 0.35f
+            val gazeAlpha = 0.40f
             smoothOutputYaw = smoothOutputYaw * (1f - gazeAlpha) + rawTotalYaw * gazeAlpha
             smoothOutputPitch = smoothOutputPitch * (1f - gazeAlpha) + rawTotalPitch * gazeAlpha
         }
