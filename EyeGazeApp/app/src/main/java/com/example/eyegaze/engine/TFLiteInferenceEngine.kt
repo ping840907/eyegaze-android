@@ -11,12 +11,14 @@ import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 
 class TFLiteInferenceEngine : EyeGazeInferenceEngine {
-    override val engineName: String = "TensorFlow Lite Engine (EyeNet)"
+    override var engineName: String = "TensorFlow Lite Engine (EyeNet)"
+        private set
     override val modelFormat: String = "TFLite (float32)"
     override var isLoaded: Boolean = false
         private set
 
     private var interpreter: Interpreter? = null
+    private var gpuDelegate: org.tensorflow.lite.gpu.GpuDelegate? = null
 
     // Dynamic output tensor indices
     private var pitchYawTensorIndex = -1
@@ -37,12 +39,28 @@ class TFLiteInferenceEngine : EyeGazeInferenceEngine {
             val declaredLength = fileDescriptor.declaredLength
             val modelByteBuffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
 
-            val options = Interpreter.Options().apply {
-                setNumThreads(4)
-                setUseNNAPI(false)
+            var interp: Interpreter? = null
+            // 1. Attempt Qualcomm Adreno GPU acceleration
+            try {
+                val delegate = org.tensorflow.lite.gpu.GpuDelegate()
+                val gpuOptions = Interpreter.Options().apply {
+                    addDelegate(delegate)
+                }
+                interp = Interpreter(modelByteBuffer, gpuOptions)
+                gpuDelegate = delegate
+                engineName = "TFLite (Qualcomm Adreno GPU 加速)"
+                Log.i("TFLiteEngine", "Qualcomm Adreno GPU Delegate initialized successfully.")
+            } catch (t: Throwable) {
+                Log.w("TFLiteEngine", "GPU acceleration init failed, falling back to CPU: ${t.message}")
+                gpuDelegate?.close()
+                gpuDelegate = null
+                val cpuOptions = Interpreter.Options().apply {
+                    setNumThreads(4)
+                }
+                interp = Interpreter(modelByteBuffer, cpuOptions)
+                engineName = "TFLite (CPU 4 核心)"
             }
 
-            val interp = Interpreter(modelByteBuffer, options)
             interpreter = interp
 
             val outputCount = interp.outputTensorCount
@@ -156,6 +174,8 @@ class TFLiteInferenceEngine : EyeGazeInferenceEngine {
     override fun close() {
         interpreter?.close()
         interpreter = null
+        gpuDelegate?.close()
+        gpuDelegate = null
         isLoaded = false
     }
 }
